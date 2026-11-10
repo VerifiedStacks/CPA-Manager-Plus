@@ -24,3 +24,16 @@ export function setFullWebLanguage(language: string) {
   void i18n.changeLanguage(language);
 }
 export const fullWebLanguage = () => i18n.resolvedLanguage || 'zh-CN';
+/** The Fresh shell's own instance; components subscribe to it for re-renders. */
+export const fullWebI18n = i18n;
+
+// The Fresh entry owns the document until the Console mounts, so it has to keep
+// `<html lang>` on the language it renders in; index.html ships a static value.
+function applyDocumentLanguage() {
+  if (typeof document !== 'undefined' && document.documentElement) {
+    document.documentElement.lang = fullWebLanguage();
+  }
+}
+
+applyDocumentLanguage();
+i18n.on('languageChanged', applyDocumentLanguage);
