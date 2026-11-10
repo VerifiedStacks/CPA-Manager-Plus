@@ -160,9 +160,7 @@ type freshApplication struct {
 	privateCollector func(context.Context) bool
 	// startIdentityWorker starts the Embedded identity reconciliation loop; a
 	// field so the completion path can be proven to start it once.
-	startIdentityWorker               func(context.Context)
-	disableEmbeddedProxyMutationsOnce sync.Once
-	clearEmbeddedProxyMutations       func()
+	startIdentityWorker func(context.Context)
 	// externalSource is the committed Connect External authority. It is the only
 	// source of an External management credential; no environment fallback exists.
 	externalSource freshkeyapply.ExternalSource
@@ -268,10 +266,16 @@ func newFreshApplication(opened *fresh.Opened, cfg config.Config, driver freshro
 			}
 		}
 	}
-	a.clearEmbeddedProxyMutations = func() {
-		legacyContext.ProxyService.SetAPIKeyMutationService(nil)
-		legacyContext.ProxyService.SetCredentialDeleteService(nil)
-	}
+	// Embedded proxy mutation fences stay active on every non-External state and
+	// fail closed when the store cannot be read; only an affirmatively committed
+	// or selected Connect External checkpoint bypasses the Supervisor fence.
+	legacyContext.ProxyService.SetEmbeddedMutationsEnabled(func(ctx context.Context) bool {
+		op, loadErr := a.current(ctx)
+		if loadErr != nil {
+			return true
+		}
+		return op.Strategy.Strategy != bootstrap.ConnectExternal
+	})
 	// An unavailable Embedded writer must not remove unrelated Console reads,
 	// and External has no identity worker to install. Always construct the
 	// router, but fail writes closed if either mutation wiring step failed, and
@@ -963,9 +967,8 @@ func serveExistingFresh(ctx context.Context, cfg config.Config, paths sqliterepo
 	// not the request that triggered them.
 	app.runCtx = ctx
 	h.SetFreshHandler(app)
-	if app.effectiveRuntimeMode(ctx) == model.RuntimeModeEmbedded && app.runtime != nil && app.runtimeSettings != nil {
-		reconciler := runtimeservice.NewReconciler(app.runtime, app.runtimeSettings, runtimeservice.DefaultReconcileInterval, log.Printf)
-		go reconciler.Run(ctx)
+	if app.runtime != nil && app.runtimeSettings != nil {
+		go app.runFreshEmbeddedReconciler(ctx, runtimeservice.DefaultReconcileInterval)
 	}
 	if opened.Record.Operation.ProductComplete {
 		if err := app.migrateManagedDestination(ctx); err != nil {
