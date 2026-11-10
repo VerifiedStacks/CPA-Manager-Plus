@@ -2,7 +2,6 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { bootstrapDiscoveryText as discoveryText } from '../i18n/bootstrapDiscovery';
 import { bootstrapJourneyText as journey } from '../i18n/bootstrapJourney';
 import { shellText } from '../i18n/consoleShell';
-import { FULLWEB_LANGUAGE_OPTIONS, setFullWebLanguage, useFullWebLanguage } from '../i18n/fullweb';
 import logo from '../assets/brand/cpamp-logo-horizontal-color.svg?inline';
 import logoOnDark from '../assets/brand/cpamp-logo-horizontal-on-dark.svg?inline';
 import { FullWebIcon } from './FullWebIcon';
@@ -36,7 +35,7 @@ type DiscoveryGuidance = ActionFeedback & {
   flow: 'fresh' | 'host' | 'ownership' | 'upgrade';
   retryable?: true;
 };
-function publicDiscoveryGuidance(payload: unknown, language: string): DiscoveryGuidance | null {
+function publicDiscoveryGuidance(payload: unknown): DiscoveryGuidance | null {
   if (!payload || typeof payload !== 'object') return null;
   const value = payload as Record<string, unknown>;
   if (value.contract_version !== 'cpamp.phase4-01.discovery.v1') return null;
@@ -50,8 +49,9 @@ function publicDiscoveryGuidance(payload: unknown, language: string): DiscoveryG
     return {
       tone: 'info',
       flow: 'fresh',
-      title: discoveryText('freshGuidanceTitle', language),
-      detail: discoveryText('freshGuidanceDetail', language),
+      title: '检测到需要宿主机认领的 Fresh 初始化状态',
+      detail:
+        '此状态仅为只读识别结果。请从受信宿主机获取一次性 Handoff 链接；本页面不会自行创建或认领安装。',
     };
   }
   if (
@@ -64,10 +64,14 @@ function publicDiscoveryGuidance(payload: unknown, language: string): DiscoveryG
     return {
       tone: 'warn',
       flow: 'upgrade',
-      title: discoveryText('upgradeGuidanceTitle', language),
-      detail: discoveryText('upgradeGuidanceDetail', language),
+      title: '检测到尚未获得升级资格的现有来源',
+      detail:
+        '只能在受信宿主机检查原始来源。当前无法进入 Fresh 初始化或 Upgrade 切换；预检成功也不代表获得导入或覆盖授权。',
     };
   }
+  // A 1.x volume mounted at /data is the one recovery state this build also
+  // names a host action for: the source itself is intact, only the file
+  // ownership stops v2 from fencing it.
   if (
     value.status === 'recovery_required' &&
     value.mode === 'recovery' &&
@@ -79,8 +83,8 @@ function publicDiscoveryGuidance(payload: unknown, language: string): DiscoveryG
       tone: 'warn',
       flow: 'ownership',
       retryable: true,
-      title: discoveryText('ownershipGuidanceTitle', language),
-      detail: discoveryText('ownershipGuidanceDetail', language),
+      title: discoveryText('ownershipGuidanceTitle'),
+      detail: discoveryText('ownershipGuidanceDetail'),
     };
   }
   if (
@@ -93,8 +97,9 @@ function publicDiscoveryGuidance(payload: unknown, language: string): DiscoveryG
     return {
       tone: 'warn',
       flow: 'host',
-      title: discoveryText('recoveryGuidanceTitle', language),
-      detail: discoveryText('recoveryGuidanceDetail', language),
+      title: '检测到需要宿主机介入的恢复状态',
+      detail:
+        '来源不具备直接初始化资格。请先在受信宿主机进行只读预检，保护数据库、data.key 和已有备份；不得从此页面尝试 Fresh/Adopt/Upgrade 写入。',
     };
   }
   if (
@@ -107,9 +112,10 @@ function publicDiscoveryGuidance(payload: unknown, language: string): DiscoveryG
     return {
       tone: 'warn',
       flow: 'host',
-      title: discoveryText('unavailableGuidanceTitle', language),
+      title: '来源状态暂无法确认',
       retryable: true,
-      detail: discoveryText('unavailableGuidanceDetail', language),
+      detail:
+        '来源只读检查未获得可信分类。请在受信宿主机排查；不能根据此状态认定为 Fresh，也不能据此执行初始化或迁移。',
     };
   }
   return null;
@@ -180,16 +186,14 @@ function describeBootstrapError(
 }
 
 export function FreshBootstrapPage({ handoff, transport }: FreshBootstrapPageProps) {
-  const language = useFullWebLanguage();
   const [lightTheme, setLightTheme] = useState(true);
   const [phase, setPhase] = useState<BootPhase>(handoff ? 'connecting' : 'no_handoff');
   const [operation, setOperation] = useState<FreshOperation | null>(null);
   const [initError, setInitError] = useState<ActionFeedback | null>(null);
   const [initErrorKind, setInitErrorKind] = useState<string | null>(null);
-  const [discoveryPayload, setDiscoveryPayload] = useState<unknown>(null);
+  const [discoveryNote, setDiscoveryNote] = useState<DiscoveryGuidance | null>(null);
   const [discoveryChecked, setDiscoveryChecked] = useState(false);
   const [discoveryAttempt, setDiscoveryAttempt] = useState(0);
-  const discoveryNote = publicDiscoveryGuidance(discoveryPayload, language);
   const startedRef = useRef(false);
   useEffect(() => {
     document.documentElement.classList.toggle('light', lightTheme);
@@ -236,7 +240,7 @@ export function FreshBootstrapPage({ handoff, transport }: FreshBootstrapPagePro
       })
       .then((payload: unknown) => {
         if (!active) return;
-        setDiscoveryPayload(payload);
+        setDiscoveryNote(publicDiscoveryGuidance(payload));
         setDiscoveryChecked(true);
       })
       .catch(() => {
@@ -284,27 +288,6 @@ export function FreshBootstrapPage({ handoff, transport }: FreshBootstrapPagePro
           )}
         </div>
         <div className="header-actions">
-          <label className="bootstrap-language">
-            <FullWebIcon name="globe" size={20} />
-            <select
-              data-testid="bootstrap-language-select"
-              aria-label={discoveryText('languageLabel', language)}
-              value={
-                FULLWEB_LANGUAGE_OPTIONS.some((item) => item.value === language)
-                  ? language
-                  : language.startsWith('zh')
-                    ? 'zh-CN'
-                    : 'en'
-              }
-              onChange={(event) => setFullWebLanguage(event.target.value)}
-            >
-              {FULLWEB_LANGUAGE_OPTIONS.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </label>
           <button
             type="button"
             className="btn btn-ghost btn-icon-only"
@@ -326,31 +309,31 @@ export function FreshBootstrapPage({ handoff, transport }: FreshBootstrapPagePro
                 <div className="wizard-step-tag">
                   <span>
                     {discoveryNote?.flow === 'fresh'
-                      ? discoveryText('freshStepTag', language)
+                      ? 'Bootstrap Gate · 需要安装主机授权'
                       : discoveryNote?.flow === 'ownership'
-                        ? discoveryText('ownershipStepTag', language)
-                        : discoveryText('preflightStepTag', language)}
+                        ? discoveryText('ownershipStepTag')
+                        : 'Source Preflight · 只读来源检查'}
                   </span>
                 </div>
                 <h1 className="wizard-title">
                   {discoveryNote?.flow === 'ownership'
-                    ? discoveryText('ownershipPageTitle', language)
+                    ? discoveryText('ownershipPageTitle')
                     : discoveryNote?.flow === 'host'
-                      ? discoveryText('hostPageTitle', language)
+                      ? '当前来源需要宿主机预检，不能直接 Fresh 初始化'
                       : discoveryNote?.flow === 'fresh'
-                        ? journey('claimRequired')
-                        : discoveryChecked
-                          ? discoveryText('unconfirmedPageTitle', language)
-                          : discoveryText('pendingPageTitle', language)}
+                      ? journey('claimRequired')
+                      : discoveryChecked
+                        ? '来源状态无法确认，禁止直接初始化'
+                        : '正在确认来源状态，禁止直接初始化'}
                 </h1>
                 <p className="wizard-desc">
                   {discoveryNote?.flow === 'ownership'
-                    ? discoveryText('ownershipPageDesc', language)
+                    ? discoveryText('ownershipPageDesc')
                     : discoveryNote?.flow === 'host'
-                      ? discoveryText('hostPageDesc', language)
+                      ? '公共 Discovery 仅提供来源类型提示，不读取或修改现有数据；后续操作必须在受信宿主机执行。'
                       : discoveryNote?.flow === 'fresh'
-                        ? journey('claimRequiredHelp')
-                        : discoveryText('unconfirmedPageDesc', language)}
+                      ? journey('claimRequiredHelp')
+                      : '尚未取得可信的 Fresh 来源分类；请检查宿主机上的来源与服务状态，不能依据当前页面执行初始化或迁移。'}
                 </p>
               </div>
               <div className="wizard-card-body">
@@ -368,32 +351,27 @@ export function FreshBootstrapPage({ handoff, transport }: FreshBootstrapPagePro
                 )}
 
                 {discoveryNote?.flow === 'ownership' ? (
-                  <div className="legacy-ownership-steps" data-testid="legacy-ownership-instructions">
+                  <div
+                    className="legacy-ownership-steps"
+                    data-testid="legacy-ownership-instructions"
+                  >
                     <div className="alert alert-info">
                       <div className="alert-content">
-                        <div className="alert-title">
-                          {discoveryText('ownershipUpgradeTitle', language)}
-                        </div>
-                        <div className="alert-desc">
-                          {discoveryText('ownershipUpgradeDesc', language)}
-                        </div>
+                        <div className="alert-title">{discoveryText('ownershipUpgradeTitle')}</div>
+                        <div className="alert-desc">{discoveryText('ownershipUpgradeDesc')}</div>
                         <div className="code-block" data-testid="legacy-upgrade-preflight-command">
-                          docker run --rm --entrypoint cpa-manager-plus -v &lt;1x_volume&gt;:/legacy:ro
-                          -v &lt;v2_volume&gt;:/data seakee/cpa-manager-plus:2.0.0-beta.1 upgrade
-                          preflight --legacy /legacy --source-version v1.14.10 --target-dir /data --json
+                          {`docker run --rm --entrypoint cpa-manager-plus -v <1x_volume>:/legacy:ro -v <v2_volume>:/data seakee/cpa-manager-plus:${__APP_VERSION__} upgrade preflight --legacy /legacy --source-version v1.14.10 --target-dir /data --json`}
                         </div>
                       </div>
                     </div>
                     <div className="alert alert-warn">
                       <div className="alert-content">
-                        <div className="alert-title">
-                          {discoveryText('ownershipChownTitle', language)}
-                        </div>
-                        <div className="alert-desc">
-                          {discoveryText('ownershipChownDesc', language)}
-                        </div>
+                        <div className="alert-title">{discoveryText('ownershipChownTitle')}</div>
+                        <div className="alert-desc">{discoveryText('ownershipChownDesc')}</div>
                         <div className="code-block" data-testid="legacy-ownership-command">
-                          chown 10002:10002 /data/usage.sqlite* /data/data.key
+                          {`docker stop <1x_container>
+docker run --rm -u 0:0 --entrypoint sh -v <1x_volume>:/data seakee/cpa-manager-plus:${__APP_VERSION__} -c 'chown -h 10002:10002 /data/usage.sqlite* /data/data.key'
+docker start <v2_container>`}
                         </div>
                       </div>
                     </div>
@@ -401,11 +379,9 @@ export function FreshBootstrapPage({ handoff, transport }: FreshBootstrapPagePro
                 ) : discoveryNote?.flow === 'host' ? (
                   <div className="alert alert-warn" data-testid="host-preflight-instructions">
                     <div className="alert-content">
-                      <div className="alert-title">
-                        {discoveryText('hostPreflightTitle', language)}
-                      </div>
+                      <div className="alert-title">下一步：在宿主机执行只读来源预检</div>
                       <div className="alert-desc">
-                        {discoveryText('hostPreflightDesc', language)}
+                        把路径替换为真实来源数据库路径。此命令不会授权迁移，且不要在来源写入仍运行时声称已停止。
                       </div>
                       <div className="code-block" data-testid="host-preflight-command">
                         cpa-manager-plus legacy-preflight --db /path/to/usage.sqlite --summary
@@ -417,13 +393,10 @@ export function FreshBootstrapPage({ handoff, transport }: FreshBootstrapPagePro
                     <div className="alert alert-warn">
                       <FullWebIcon name="alert" size={22} />
                       <div className="alert-content">
-                        <div className="alert-title">
-                          {discoveryText('freshHowTitle', language)}
-                        </div>
+                        <div className="alert-title">如何获取或恢复 Bootstrap 授权链接？</div>
                         <div className="alert-desc">
-                          {discoveryText('freshHowPrefix', language)}
-                          <code>#handoff=...</code>
-                          {discoveryText('freshHowSuffix', language)}
+                          请在受信宿主机运行初始化命令，并使用输出的带 <code>#handoff=...</code>{' '}
+                          片段的完整 URL 重新打开本页面：
                         </div>
                       </div>
                     </div>
@@ -439,12 +412,11 @@ export function FreshBootstrapPage({ handoff, transport }: FreshBootstrapPagePro
                   >
                     <div className="alert-content">
                       <div className="alert-title">
-                        {discoveryChecked
-                          ? discoveryText('unconfirmedCardTitle', language)
-                          : discoveryText('pendingCardTitle', language)}
+                        {discoveryChecked ? '来源状态无法确认' : '正在读取来源状态'}
                       </div>
                       <div className="alert-desc">
-                        {discoveryText('unconfirmedCardDesc', language)}
+                        不提供 Fresh
+                        初始化命令；请在受信宿主机确认来源、日志与服务状态。未知结果不会授予任何写入权限。
                       </div>
                     </div>
                   </div>
@@ -458,11 +430,13 @@ export function FreshBootstrapPage({ handoff, transport }: FreshBootstrapPagePro
                       // Reissue only the public read-only discovery GET.
                       // An unverified result never grants a claim or write authority.
                       setDiscoveryChecked(false);
-                      setDiscoveryPayload(null);
+                      setDiscoveryNote(null);
                       setDiscoveryAttempt((attempt) => attempt + 1);
                     }}
                   >
-                    {discoveryText('recheckButton', language)}
+                    {discoveryNote?.flow === 'ownership'
+                      ? discoveryText('recheckButton')
+                      : '重新检查来源状态'}
                   </button>
                 )}
               </div>

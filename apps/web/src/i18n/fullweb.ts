@@ -1,4 +1,3 @@
-import { useSyncExternalStore } from 'react';
 import { createInstance } from 'i18next';
 import { fullweb as zhCN } from './locales/zh-CN.json';
 import { fullweb as zhTW } from './locales/zh-TW.json';
@@ -25,21 +24,3 @@ export function setFullWebLanguage(language: string) {
   void i18n.changeLanguage(language);
 }
 export const fullWebLanguage = () => i18n.resolvedLanguage || 'zh-CN';
-
-export const FULLWEB_LANGUAGE_OPTIONS = [
-  { value: 'zh-CN', label: '简体中文' },
-  { value: 'zh-TW', label: '繁體中文' },
-  { value: 'en', label: 'English' },
-  { value: 'ru', label: 'Русский' },
-] as const;
-
-function subscribeFullWebLanguage(listener: () => void) {
-  i18n.on('languageChanged', listener);
-  return () => {
-    i18n.off('languageChanged', listener);
-  };
-}
-
-export function useFullWebLanguage(): string {
-  return useSyncExternalStore(subscribeFullWebLanguage, fullWebLanguage, fullWebLanguage);
-}
